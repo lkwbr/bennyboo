@@ -55,23 +55,227 @@
       canvas.is-dragging {
         cursor: grabbing;
       }
+
+      #audio-ui {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 6px;
+        color: #e6f2ff;
+        font-family: "Rajdhani", sans-serif;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+      }
+
+      #audio-track {
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+
+      #audio-toggle {
+        border: none;
+        background: rgba(140, 190, 255, 0.18);
+        color: inherit;
+        border-radius: 999px;
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 0;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      #audio-toggle:hover {
+        background: rgba(140, 190, 255, 0.32);
+      }
+
+      #audio-toggle svg {
+        width: 14px;
+        height: 14px;
+        fill: currentColor;
+      }
+
+      #audio-toggle .icon-pause {
+        display: none;
+      }
+
+      #audio-toggle.is-playing .icon-play {
+        display: none;
+      }
+
+      #audio-toggle.is-playing .icon-pause {
+        display: block;
+      }
+
+      #audio-toggle:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      #reveal-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(
+            circle at 30% 20%,
+            rgba(80, 120, 200, 0.18),
+            transparent 55%
+          ),
+          radial-gradient(
+            circle at 80% 70%,
+            rgba(200, 80, 120, 0.12),
+            transparent 60%
+          ),
+          #05070f;
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+      }
+
+      #reveal-screen.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      #reveal-button {
+        border: 1px solid rgba(200, 220, 255, 0.4);
+        background: rgba(10, 20, 38, 0.6);
+        color: #e7f1ff;
+        font-family: "Cinzel", serif;
+        font-size: 18px;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        padding: 16px 34px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: transform 0.25s ease, box-shadow 0.25s ease;
+        box-shadow: 0 0 30px rgba(140, 190, 255, 0.35);
+      }
+
+      #reveal-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 40px rgba(140, 190, 255, 0.55);
+      }
+
+      @media (max-width: 640px) {
+        #audio-ui {
+          right: 10px;
+          bottom: 10px;
+          padding: 6px 8px;
+        }
+
+        #reveal-button {
+          font-size: 16px;
+          padding: 14px 28px;
+        }
+      }
     </style>
   </head>
   <body>
+    <div id="reveal-screen">
+      <button id="reveal-button" type="button">Reveal</button>
+    </div>
     <div id="app"></div>
+    <div id="audio-ui">
+      <button id="audio-toggle" type="button" aria-label="Play">
+        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 5l12 7-12 7z" />
+        </svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+        </svg>
+      </button>
+      <div id="audio-track">1.mp3</div>
+    </div>
     <script type="module">
       import * as THREE from "three";
       import * as CANNON from "cannon-es";
       import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
       const app = document.getElementById("app");
+      const revealScreen = document.getElementById("reveal-screen");
+      const revealButton = document.getElementById("reveal-button");
+      const audioTrackLabel = document.getElementById("audio-track");
+      const audioToggleButton = document.getElementById("audio-toggle");
       const renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      let pixelRatio = Math.min(window.devicePixelRatio, 2);
+      renderer.setPixelRatio(pixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
       app.appendChild(renderer.domElement);
+
+      const postEnabled = false;
+      const renderTarget = new THREE.WebGLRenderTarget(
+        window.innerWidth * pixelRatio,
+        window.innerHeight * pixelRatio,
+        { depthBuffer: true }
+      );
+      renderTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+      const postScene = new THREE.Scene();
+      const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const postUniforms = {
+        uTexture: { value: renderTarget.texture },
+        uTime: { value: 0 },
+        uIntensity: { value: 0 },
+        uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+        uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+      };
+      const postMaterial = new THREE.ShaderMaterial({
+        uniforms: postUniforms,
+        toneMapped: false,
+        depthWrite: false,
+        depthTest: false,
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uTexture;
+          uniform float uTime;
+          uniform float uIntensity;
+          uniform vec2 uCenter;
+          varying vec2 vUv;
+
+          void main() {
+            vec2 uv = vUv;
+            vec2 dir = uv - uCenter;
+            float dist = length(dir);
+            float ripple = sin(dist * 32.0 - uTime * 4.6);
+            float pulse = sin(uTime * 1.4) * 0.5 + 0.5;
+            float falloff = smoothstep(1.2, 0.0, dist);
+            float amp = uIntensity * (0.35 + 0.65 * pulse) * falloff;
+            vec2 normDir = normalize(dir + 0.0001);
+            vec2 warp = vec2(0.0);
+            vec2 uvWarp = clamp(uv + warp, 0.0, 1.0);
+            vec2 shift = warp * 0.6;
+
+            vec3 color;
+            color.r = texture2D(uTexture, clamp(uvWarp + shift, 0.0, 1.0)).r;
+            color.g = texture2D(uTexture, uvWarp).g;
+            color.b = texture2D(uTexture, clamp(uvWarp - shift, 0.0, 1.0)).b;
+            float rippleColor = abs(ripple);
+            color += rippleColor * amp * vec3(0.08, 0.03, 0.12);
+            gl_FragColor = vec4(color, 1.0);
+            #include <colorspace_fragment>
+          }
+        `
+      });
+      const postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial);
+      postScene.add(postQuad);
 
       const scene = new THREE.Scene();
       scene.fog = new THREE.Fog("#02040b", 8, 24);
@@ -98,19 +302,169 @@
       const motionEnabled = !window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
+      const cardSurfaceFxEnabled = true;
 
       const cardSpec = {
-        name: "Benny Boo, the Physical Genius",
+        name: "Benny \"The Physical Genius\" Boo",
         attribute: "EARTH",
         typeLine: "Type: Warrior / Effect",
         level: 6,
-        effectText:
-          "This card gains 300 ATK for each face-up card on the field. Once per turn (Quick Effect): you can target 1 face-up card on the field; negate its effects until the end of the turn, then you can destroy it. If a card is destroyed by this effect: banish it. If this card would be destroyed, you can negate that destruction.",
-        flavorText: "\"He hears it before it happens.\"",
+        effectText: `Gains 300 ATK for each face-up card on the field. Once per turn, he targets 1 face-up card and turns its effect off with a blood-curdling shreik: "BUTTHEAD FREAK!". If there is a PS2 game disk on the table, he WILL make it no more. If you be talking shit, he WILL hear it. When summoned, add 1 Tool from your Deck to your hand, because he's just fucking built different. If he'd be destroyed - fat chance in hell, buddy - discard 1 card. If by unfortunate circumstances Basil is on the field, he loses because he is in the presence of his soul mate.`,
+        flavorText: "\"he'll scratch your bitch ass up\"",
         atk: "2300",
         def: "2000",
         backText: "call +1 (916) 799-4473 for a good time"
       };
+
+      const audioPlaylist = [
+        "assets/audio/1.mp3",
+        "assets/audio/2.mp3",
+        "assets/audio/3.mp3",
+        "assets/audio/4.mp3",
+        "assets/audio/5.mp3",
+        "assets/audio/6.mp3"
+      ];
+
+      const audioState = {
+        context: null,
+        analyser: null,
+        data: null,
+        audio: null,
+        index: 0,
+        started: false,
+        failed: false
+      };
+
+      const formatTrackName = (trackPath) => {
+        if (!trackPath) {
+          return "Unknown";
+        }
+        const file = trackPath.split("/").pop();
+        return file || "Unknown";
+      };
+
+      const updateAudioUi = () => {
+        if (!audioTrackLabel || !audioToggleButton) {
+          return;
+        }
+        if (audioState.failed) {
+          audioTrackLabel.textContent = "Audio Unavailable";
+          audioToggleButton.classList.remove("is-playing");
+          audioToggleButton.setAttribute("aria-label", "Play");
+          audioToggleButton.disabled = true;
+          return;
+        }
+
+        const trackName = audioPlaylist[audioState.index]
+          ? formatTrackName(audioPlaylist[audioState.index])
+          : "No Audio";
+        const isPlaying = audioState.audio && !audioState.audio.paused;
+        audioTrackLabel.textContent = trackName;
+        audioToggleButton.classList.toggle("is-playing", isPlaying);
+        audioToggleButton.setAttribute("aria-label", isPlaying ? "Pause" : "Play");
+        audioToggleButton.disabled = false;
+      };
+
+      const setupAudio = () => {
+        if (audioState.context || audioState.failed || audioPlaylist.length === 0) {
+          return;
+        }
+
+        const audio = new Audio();
+        audio.preload = "auto";
+        audio.loop = false;
+        audio.crossOrigin = "anonymous";
+
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 1024;
+        const source = context.createMediaElementSource(audio);
+        source.connect(analyser);
+        analyser.connect(context.destination);
+
+        audioState.audio = audio;
+        audioState.context = context;
+        audioState.analyser = analyser;
+        audioState.data = new Uint8Array(analyser.frequencyBinCount);
+
+        audio.addEventListener("ended", () => {
+          if (!audioPlaylist.length) {
+            return;
+          }
+          const nextIndex = (audioState.index + 1) % audioPlaylist.length;
+          playTrack(nextIndex);
+        });
+
+        audio.addEventListener("error", () => {
+          audioState.failed = true;
+          updateAudioUi();
+        });
+
+        audio.addEventListener("play", updateAudioUi);
+        audio.addEventListener("pause", updateAudioUi);
+        audio.addEventListener("loadeddata", updateAudioUi);
+        updateAudioUi();
+      };
+
+      const playTrack = (index) => {
+        if (!audioState.audio || audioPlaylist.length === 0) {
+          return;
+        }
+        const safeIndex =
+          ((index % audioPlaylist.length) + audioPlaylist.length) %
+          audioPlaylist.length;
+        audioState.index = safeIndex;
+        audioState.audio.src = audioPlaylist[safeIndex];
+        audioState.audio.play().catch(() => {
+          audioState.started = false;
+          updateAudioUi();
+        });
+        updateAudioUi();
+      };
+
+      const ensureAudio = () => {
+        if (audioState.started || audioState.failed) {
+          return;
+        }
+        setupAudio();
+        if (!audioState.context || !audioState.audio) {
+          return;
+        }
+        audioState.started = true;
+        audioState.context
+          .resume()
+          .then(() => {
+            playTrack(audioState.index);
+          })
+          .catch(() => {
+            audioState.failed = true;
+            updateAudioUi();
+          });
+        updateAudioUi();
+      };
+
+      if (audioToggleButton) {
+        audioToggleButton.addEventListener("click", () => {
+          if (audioState.failed) {
+            return;
+          }
+          if (!audioState.started) {
+            ensureAudio();
+            return;
+          }
+          if (!audioState.audio) {
+            return;
+          }
+          if (audioState.audio.paused) {
+            audioState.audio.play().catch(() => {});
+          } else {
+            audioState.audio.pause();
+          }
+          updateAudioUi();
+        });
+      }
+
+      updateAudioUi();
 
         const loadImage = (src) =>
           new Promise((resolve) => {
@@ -240,7 +594,7 @@
         frameGradient.addColorStop(0.45, "#7b5e2e");
         frameGradient.addColorStop(1, "#1e1a12");
 
-        drawRoundedRect(ctx, 0, 0, width, height, 16 * scale);
+        drawRoundedRect(ctx, 0, 0, width, height, 24 * scale);
         ctx.fillStyle = frameGradient;
         ctx.fill();
 
@@ -258,7 +612,7 @@
         innerGradient.addColorStop(0, "rgba(255,255,255,0.75)");
         innerGradient.addColorStop(1, "rgba(247,229,196,0.92)");
 
-        drawRoundedRect(ctx, innerX, innerY, innerW, innerH, 12 * scale);
+        drawRoundedRect(ctx, innerX, innerY, innerW, innerH, 18 * scale);
         ctx.fillStyle = innerGradient;
         ctx.fill();
         ctx.strokeStyle = "rgba(123, 94, 46, 0.5)";
@@ -494,7 +848,7 @@
         return canvas;
       };
 
-      const buildBackTexture = (image) => {
+      const buildBackTexture = (image, sigImage) => {
         const width = 1024;
         const height = Math.round((width * 86) / 59);
         const canvas = document.createElement("canvas");
@@ -507,7 +861,7 @@
         frameGradient.addColorStop(0, "#e6c98b");
         frameGradient.addColorStop(0.45, "#7b5e2e");
         frameGradient.addColorStop(1, "#1e1a12");
-        drawRoundedRect(ctx, 0, 0, width, height, 16 * scale);
+        drawRoundedRect(ctx, 0, 0, width, height, 24 * scale);
         ctx.fillStyle = frameGradient;
         ctx.fill();
 
@@ -517,7 +871,7 @@
         const innerW = width - outerPad * 2;
         const innerH = height - outerPad * 2;
 
-        drawRoundedRect(ctx, innerX, innerY, innerW, innerH, 12 * scale);
+        drawRoundedRect(ctx, innerX, innerY, innerW, innerH, 18 * scale);
         ctx.save();
         ctx.clip();
         drawImageCover(ctx, image, innerX, innerY, innerW, innerH);
@@ -525,6 +879,18 @@
         ctx.strokeStyle = "rgba(123, 94, 46, 0.45)";
         ctx.lineWidth = 2 * scale;
         ctx.stroke();
+
+        if (sigImage) {
+          const maxSigWidth = innerW * 0.55;
+          const sigAspect = sigImage.width / sigImage.height;
+          const sigWidth = maxSigWidth;
+          const sigHeight = sigWidth / sigAspect;
+          const sigX = innerX + innerW - sigWidth - 16 * scale;
+          const sigY = innerY + innerH - sigHeight - 16 * scale;
+          ctx.globalAlpha = 0.85;
+          ctx.drawImage(sigImage, sigX, sigY, sigWidth, sigHeight);
+          ctx.globalAlpha = 1;
+        }
 
         return canvas;
       };
@@ -534,9 +900,9 @@
         canvas.width = 256;
         canvas.height = 256;
         const ctx = canvas.getContext("2d");
-        const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
-        gradient.addColorStop(0, "rgba(120,255,220,0.6)");
-        gradient.addColorStop(0.5, "rgba(32,160,255,0.25)");
+        const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 80);
+        gradient.addColorStop(0, "rgba(120,255,220,0.45)");
+        gradient.addColorStop(0.35, "rgba(32,160,255,0.1)");
         gradient.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 256, 256);
@@ -558,9 +924,9 @@
           center,
           256
         );
-        gradient.addColorStop(0, "rgba(120,255,240,0.7)");
-        gradient.addColorStop(0.35, "rgba(80,200,255,0.35)");
-        gradient.addColorStop(0.7, "rgba(60,140,255,0.16)");
+        gradient.addColorStop(0, "rgba(120,255,240,0.45)");
+        gradient.addColorStop(0.35, "rgba(80,200,255,0.22)");
+        gradient.addColorStop(0.7, "rgba(60,140,255,0.08)");
         gradient.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 512, 512);
@@ -568,7 +934,7 @@
         ctx.globalCompositeOperation = "screen";
         const rim = ctx.createRadialGradient(center, center, 140, center, center, 256);
         rim.addColorStop(0, "rgba(255,255,255,0)");
-        rim.addColorStop(0.7, "rgba(255,255,255,0.22)");
+        rim.addColorStop(0.7, "rgba(255,255,255,0.12)");
         rim.addColorStop(1, "rgba(255,255,255,0)");
         ctx.fillStyle = rim;
         ctx.fillRect(0, 0, 512, 512);
@@ -587,8 +953,8 @@
         const ring = ctx.createRadialGradient(center, center, 120, center, center, 256);
         ring.addColorStop(0, "rgba(0,0,0,0)");
         ring.addColorStop(0.45, "rgba(120,220,255,0.0)");
-        ring.addColorStop(0.6, "rgba(120,220,255,0.35)");
-        ring.addColorStop(0.78, "rgba(80,180,255,0.2)");
+        ring.addColorStop(0.6, "rgba(120,220,255,0.22)");
+        ring.addColorStop(0.78, "rgba(80,180,255,0.12)");
         ring.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = ring;
         ctx.fillRect(0, 0, 512, 512);
@@ -596,9 +962,69 @@
         ctx.globalCompositeOperation = "screen";
         const glow = ctx.createRadialGradient(center, center, 0, center, center, 256);
         glow.addColorStop(0, "rgba(255,255,255,0)");
-        glow.addColorStop(0.5, "rgba(255,255,255,0.08)");
+        glow.addColorStop(0.5, "rgba(255,255,255,0.04)");
         glow.addColorStop(1, "rgba(255,255,255,0)");
         ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, 512, 512);
+        ctx.globalCompositeOperation = "source-over";
+
+        return canvas;
+      };
+
+      const createBackShineTexture = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext("2d");
+
+        const diagonal = ctx.createLinearGradient(0, 0, 512, 512);
+        diagonal.addColorStop(0, "rgba(255,255,255,0)");
+        diagonal.addColorStop(0.35, "rgba(255,255,255,0.08)");
+        diagonal.addColorStop(0.5, "rgba(255,255,255,0.22)");
+        diagonal.addColorStop(0.65, "rgba(255,255,255,0.1)");
+        diagonal.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = diagonal;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.globalCompositeOperation = "screen";
+        const soft = ctx.createRadialGradient(360, 140, 20, 360, 140, 220);
+        soft.addColorStop(0, "rgba(255,220,160,0.25)");
+        soft.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = soft;
+        ctx.fillRect(0, 0, 512, 512);
+        ctx.globalCompositeOperation = "source-over";
+
+        return canvas;
+      };
+
+      const createRedHaloTexture = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext("2d");
+        const center = 256;
+
+        const glow = ctx.createRadialGradient(
+          center,
+          center,
+          0,
+          center,
+          center,
+          256
+        );
+        glow.addColorStop(0, "rgba(255,120,90,0.45)");
+        glow.addColorStop(0.45, "rgba(200,40,20,0.35)");
+        glow.addColorStop(0.75, "rgba(120,10,5,0.18)");
+        glow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.globalCompositeOperation = "screen";
+        const ring = ctx.createRadialGradient(center, center, 140, center, center, 256);
+        ring.addColorStop(0, "rgba(255,255,255,0)");
+        ring.addColorStop(0.5, "rgba(255,180,140,0.08)");
+        ring.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = ring;
         ctx.fillRect(0, 0, 512, 512);
         ctx.globalCompositeOperation = "source-over";
 
@@ -614,27 +1040,35 @@
 
         const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
         gradient.addColorStop(0, "rgba(0,0,0,0)");
-        gradient.addColorStop(0.12, "rgba(120,10,0,0.25)");
-        gradient.addColorStop(0.35, "rgba(255,60,0,0.75)");
-        gradient.addColorStop(0.62, "rgba(255,140,20,0.9)");
-        gradient.addColorStop(0.85, "rgba(255,220,120,0.95)");
-        gradient.addColorStop(1, "rgba(255,255,240,1)");
+        gradient.addColorStop(0.08, "rgba(120,0,0,0.35)");
+        gradient.addColorStop(0.3, "rgba(255,40,0,0.85)");
+        gradient.addColorStop(0.55, "rgba(255,140,0,0.95)");
+        gradient.addColorStop(0.8, "rgba(255,240,140,1)");
+        gradient.addColorStop(1, "rgba(255,255,255,1)");
 
         ctx.fillStyle = gradient;
         ctx.fillRect(0, centerY - 16, canvas.width, 32);
 
         ctx.globalCompositeOperation = "lighter";
-        for (let i = 0; i < 16; i += 1) {
+        for (let i = 0; i < 22; i += 1) {
           const x = Math.random() * canvas.width * 0.8;
           const y = centerY + (Math.random() - 0.5) * 26;
-          const radius = 8 + Math.random() * 18;
+          const radius = 10 + Math.random() * 22;
           const flame = ctx.createRadialGradient(x, y, 0, x, y, radius);
-          flame.addColorStop(0, "rgba(255,200,80,0.9)");
-          flame.addColorStop(0.4, "rgba(255,120,0,0.6)");
+          flame.addColorStop(0, "rgba(255,230,140,0.95)");
+          flame.addColorStop(0.4, "rgba(255,140,20,0.7)");
           flame.addColorStop(1, "rgba(80,0,0,0)");
           ctx.fillStyle = flame;
           ctx.beginPath();
-          ctx.ellipse(x, y, radius * 1.1, radius * 0.6, 0, 0, Math.PI * 2);
+          ctx.ellipse(
+            x,
+            y,
+            radius * 1.5,
+            radius * 0.7,
+            (Math.random() - 0.5) * 0.6,
+            0,
+            Math.PI * 2
+          );
           ctx.fill();
         }
 
@@ -647,6 +1081,52 @@
         ctx.fillRect(0, centerY - 6, canvas.width, 12);
         ctx.globalCompositeOperation = "source-over";
 
+        ctx.globalCompositeOperation = "screen";
+        const head = ctx.createRadialGradient(
+          canvas.width * 0.92,
+          centerY,
+          0,
+          canvas.width * 0.92,
+          centerY,
+          18
+        );
+        head.addColorStop(0, "rgba(255,255,255,1)");
+        head.addColorStop(0.5, "rgba(255,210,140,0.85)");
+        head.addColorStop(1, "rgba(255,80,0,0)");
+        ctx.fillStyle = head;
+        ctx.beginPath();
+        ctx.arc(canvas.width * 0.92, centerY, 18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = "source-over";
+
+        return canvas;
+      };
+
+      const createStarTexture = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext("2d");
+        const center = 32;
+        const gradient = ctx.createRadialGradient(center, center, 0, center, center, 32);
+        gradient.addColorStop(0, "rgba(255,255,255,1)");
+        gradient.addColorStop(0.25, "rgba(255,255,255,0.9)");
+        gradient.addColorStop(0.6, "rgba(255,255,255,0.35)");
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 64, 64);
+
+        ctx.globalCompositeOperation = "screen";
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(center, 6);
+        ctx.lineTo(center, 58);
+        ctx.moveTo(6, center);
+        ctx.lineTo(58, center);
+        ctx.stroke();
+        ctx.globalCompositeOperation = "source-over";
+
         return canvas;
       };
 
@@ -654,30 +1134,56 @@
         return 0.8 + Math.sin(time * 1.6) * 0.2 * intensity;
       };
 
-      const createStarLayer = (count, spread, size, speed, color) => {
+      const createStarLayer = (count, spread, size, speed, color, texture) => {
         const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
         const nearZ = -2;
         const farZ = -spread - 6;
+        const baseColor = new THREE.Color(color);
         for (let i = 0; i < count; i += 1) {
           positions[i * 3] = (Math.random() - 0.5) * spread;
           positions[i * 3 + 1] = (Math.random() - 0.5) * spread;
           positions[i * 3 + 2] = farZ + Math.random() * (nearZ - farZ);
+          const starColor = baseColor.clone();
+          starColor.offsetHSL(
+            (Math.random() - 0.5) * 0.04,
+            (Math.random() - 0.5) * 0.2,
+            (Math.random() - 0.5) * 0.2
+          );
+          colors[i * 3] = starColor.r;
+          colors[i * 3 + 1] = starColor.g;
+          colors[i * 3 + 2] = starColor.b;
         }
         geometry.setAttribute(
           "position",
           new THREE.BufferAttribute(positions, 3)
         );
+        geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
         const material = new THREE.PointsMaterial({
-          color,
+          map: texture,
           size,
+          sizeAttenuation: true,
           transparent: true,
-          opacity: 0.7,
+          opacity: 0.65,
+          alphaTest: 0.05,
           depthWrite: false,
-          blending: THREE.AdditiveBlending
+          blending: THREE.AdditiveBlending,
+          vertexColors: true
         });
         const points = new THREE.Points(geometry, material);
-        return { points, positions, spread, speed, material, nearZ, farZ };
+        return {
+          points,
+          positions,
+          colors,
+          spread,
+          speed,
+          material,
+          nearZ,
+          farZ,
+          twinkleOffset: Math.random() * Math.PI * 2,
+          baseOpacity: 0.58
+        };
       };
 
       const init = async () => {
@@ -686,8 +1192,9 @@
         }
         const artImage = await loadImage("assets/image.png");
         const backImage = await loadImage("assets/wc.png");
+        const sigImage = await loadImage("assets/sig.png");
         const frontCanvas = buildFrontTexture(artImage);
-        const backCanvas = buildBackTexture(backImage);
+        const backCanvas = buildBackTexture(backImage, sigImage);
         const frontTexture = new THREE.CanvasTexture(frontCanvas);
         const backTexture = new THREE.CanvasTexture(backCanvas);
         frontTexture.colorSpace = THREE.SRGBColorSpace;
@@ -700,7 +1207,8 @@
         const cardWidth = 2.4;
         const cardHeight = (cardWidth * 86) / 59;
         const cardDepth = 0.06;
-        const cornerRadius = 0.14;
+        const geometryDepth = 0.6;
+        const cornerRadius = 0.24;
 
         const sideMaterial = new THREE.MeshStandardMaterial({
           color: "#241c12",
@@ -712,10 +1220,12 @@
           roughness: 0.55,
           metalness: 0.2
         });
-        const backMaterial = new THREE.MeshStandardMaterial({
+        const backMaterial = new THREE.MeshPhysicalMaterial({
           map: backTexture,
-          roughness: 0.6,
-          metalness: 0.15
+          roughness: 0.45,
+          metalness: 0.2,
+          clearcoat: 0.35,
+          clearcoatRoughness: 0.35
         });
 
         const cardMaterials = [
@@ -730,10 +1240,11 @@
         const cardGeometry = new RoundedBoxGeometry(
           cardWidth,
           cardHeight,
-          cardDepth,
+          geometryDepth,
           6,
           cornerRadius
         );
+        cardGeometry.scale(1, 1, cardDepth / geometryDepth);
         const cardMesh = new THREE.Mesh(cardGeometry, cardMaterials);
         scene.add(cardMesh);
 
@@ -796,21 +1307,46 @@
           holoMaterial
         );
         holoPlane.position.z = cardDepth / 2 + 0.002;
+        holoPlane.visible = cardSurfaceFxEnabled;
         cardMesh.add(holoPlane);
+
+        const backShineTexture = new THREE.CanvasTexture(createBackShineTexture());
+        backShineTexture.colorSpace = THREE.SRGBColorSpace;
+        const backShineMaterial = new THREE.MeshBasicMaterial({
+          map: backShineTexture,
+          transparent: true,
+          opacity: 0.22,
+          depthWrite: false,
+          depthTest: true,
+          blending: THREE.AdditiveBlending
+        });
+        const backShineShape = createRoundedRectShape(
+          cardWidth * 0.98,
+          cardHeight * 0.98,
+          cornerRadius * 0.9
+        );
+        const backShinePlane = new THREE.Mesh(
+          new THREE.ShapeGeometry(backShineShape),
+          backShineMaterial
+        );
+        backShinePlane.position.z = -cardDepth / 2 - 0.002;
+        backShinePlane.rotation.y = Math.PI;
+        backShinePlane.visible = cardSurfaceFxEnabled;
+        cardMesh.add(backShinePlane);
 
         const glowTexture = new THREE.CanvasTexture(createGlowTexture());
         glowTexture.colorSpace = THREE.SRGBColorSpace;
         const glowMaterial = new THREE.SpriteMaterial({
           map: glowTexture,
           transparent: true,
-          opacity: 0.2,
+          opacity: 0.14,
           depthWrite: false,
           depthTest: false,
           blending: THREE.AdditiveBlending
         });
         const glowSprite = new THREE.Sprite(glowMaterial);
-        glowSprite.scale.set(cardWidth * 1.5, cardHeight * 1.5, 1);
-        glowSprite.position.z = -cardDepth * 4;
+        glowSprite.scale.set(cardWidth * 1.05, cardHeight * 1.05, 1);
+        glowSprite.position.z = -cardDepth * 3;
         glowSprite.renderOrder = 2;
         cardMesh.add(glowSprite);
 
@@ -819,15 +1355,15 @@
         const auraMaterial = new THREE.SpriteMaterial({
           map: auraTexture,
           transparent: true,
-          opacity: 0.85,
+          opacity: 0.6,
           depthWrite: false,
           depthTest: true,
           blending: THREE.AdditiveBlending
         });
         const auraSprite = new THREE.Sprite(auraMaterial);
         const auraBaseScale = {
-          x: cardWidth * 3.1,
-          y: cardHeight * 3.1
+          x: cardWidth * 2.4,
+          y: cardHeight * 2.4
         };
         auraSprite.scale.set(auraBaseScale.x, auraBaseScale.y, 1);
         auraSprite.renderOrder = 1;
@@ -836,8 +1372,8 @@
         const waveTexture = new THREE.CanvasTexture(createWaveTexture());
         waveTexture.colorSpace = THREE.SRGBColorSpace;
         const waveBaseScale = {
-          x: cardWidth * 3.4,
-          y: cardHeight * 3.4
+          x: cardWidth * 3.1,
+          y: cardHeight * 3.1
         };
         const waveSprites = [0, 1].map((index) => {
           const waveMaterial = new THREE.SpriteMaterial({
@@ -871,67 +1407,74 @@
         shockwave.position.z = cardDepth / 2 + 0.01;
         cardMesh.add(shockwave);
 
+        const redHaloTexture = new THREE.CanvasTexture(createRedHaloTexture());
+        redHaloTexture.colorSpace = THREE.SRGBColorSpace;
+        const redHaloMaterial = new THREE.SpriteMaterial({
+          map: redHaloTexture,
+          transparent: true,
+          opacity: 0.35,
+          depthWrite: false,
+          depthTest: true,
+          blending: THREE.AdditiveBlending
+        });
+        const redHaloSprite = new THREE.Sprite(redHaloMaterial);
+        redHaloSprite.scale.set(34, 34, 1);
+        redHaloSprite.position.set(0, 0, -40);
+        scene.add(redHaloSprite);
+
+        const starTexture = new THREE.CanvasTexture(createStarTexture());
+        starTexture.colorSpace = THREE.SRGBColorSpace;
+        starTexture.minFilter = THREE.LinearFilter;
+        starTexture.magFilter = THREE.LinearFilter;
+
         const starLayers = [
-          createStarLayer(900, 28, 0.05, 0.35, 0xffffff),
-          createStarLayer(700, 22, 0.08, 0.55, 0xffe6cc),
-          createStarLayer(450, 18, 0.12, 0.8, 0xcff6ff)
+          createStarLayer(900, 28, 0.06, 0.35, 0xffffff, starTexture),
+          createStarLayer(700, 22, 0.09, 0.55, 0xffe6cc, starTexture),
+          createStarLayer(450, 18, 0.14, 0.8, 0xcff6ff, starTexture)
         ];
 
         starLayers.forEach((layer) => {
           scene.add(layer.points);
         });
 
-        const meteorTexture = new THREE.CanvasTexture(createMeteorTexture());
-        meteorTexture.colorSpace = THREE.SRGBColorSpace;
-        const meteorGroup = new THREE.Group();
-        meteorGroup.visible = false;
-        const meteorCount = 60;
-        const meteorField = [];
-        const meteorBounds = {
-          x: 10,
-          y: 6,
-          nearZ: -1.5,
-          farZ: -26
-        };
-        const meteorBaseDirection = new THREE.Vector3(0.7, -0.3, 1).normalize();
-
-        const resetMeteor = (meteor) => {
-          const offset = (Math.random() - 0.5) * 0.6;
-          meteor.userData.direction
-            .copy(meteorBaseDirection)
-            .applyAxisAngle(new THREE.Vector3(0, 0, 1), offset);
-          meteor.position.set(
-            (Math.random() - 0.5) * meteorBounds.x * 2,
-            (Math.random() - 0.5) * meteorBounds.y * 2,
-            meteorBounds.farZ - Math.random() * 12
+        starLayers.forEach((layer) => {
+          const trailPositions = new Float32Array(layer.positions.length * 2);
+          const trailColors = new Float32Array(layer.colors.length * 2);
+          for (let i = 0; i < layer.colors.length; i += 3) {
+            const trailIndex = (i / 3) * 6;
+            trailColors[trailIndex] = layer.colors[i];
+            trailColors[trailIndex + 1] = layer.colors[i + 1];
+            trailColors[trailIndex + 2] = layer.colors[i + 2];
+            trailColors[trailIndex + 3] = layer.colors[i];
+            trailColors[trailIndex + 4] = layer.colors[i + 1];
+            trailColors[trailIndex + 5] = layer.colors[i + 2];
+          }
+          const trailGeometry = new THREE.BufferGeometry();
+          trailGeometry.setAttribute(
+            "position",
+            new THREE.BufferAttribute(trailPositions, 3)
           );
-          meteor.userData.speed = 4.5 + Math.random() * 4.2;
-          meteor.userData.opacity = 0.4 + Math.random() * 0.4;
-        };
-
-        for (let i = 0; i < meteorCount; i += 1) {
-          const meteorMaterial = new THREE.SpriteMaterial({
-            map: meteorTexture,
-            color: 0xffb069,
+          trailGeometry.setAttribute(
+            "color",
+            new THREE.BufferAttribute(trailColors, 3)
+          );
+          const trailMaterial = new THREE.LineBasicMaterial({
             transparent: true,
             opacity: 0,
-            depthWrite: false,
-            depthTest: true,
-            blending: THREE.AdditiveBlending
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
           });
-          const meteor = new THREE.Sprite(meteorMaterial);
-          const scaleX = 3.6 + Math.random() * 3.6;
-          const scaleY = 0.35 + Math.random() * 0.2;
-          meteor.userData.baseScale = new THREE.Vector2(scaleX, scaleY);
-          meteor.scale.set(scaleX, scaleY, 1);
-          meteor.material.rotation = -0.6 + Math.random() * 0.3;
-          meteor.userData.direction = new THREE.Vector3();
-          resetMeteor(meteor);
-          meteorField.push(meteor);
-          meteorGroup.add(meteor);
-        }
+          const trails = new THREE.LineSegments(trailGeometry, trailMaterial);
+          trails.frustumCulled = false;
+          scene.add(trails);
+          layer.trail = {
+            positions: trailPositions,
+            material: trailMaterial,
+            geometry: trailGeometry
+          };
+        });
 
-        scene.add(meteorGroup);
+
 
         const world = new CANNON.World({
           gravity: new CANNON.Vec3(0, 0, 0)
@@ -971,21 +1514,27 @@
         let hoverX = 0;
         let hoverY = 0;
         let targetLift = 0;
-        let glowTarget = 0.2;
-        let auraTarget = 0.95;
+        let glowTarget = 0.14;
+        let auraTarget = 0.65;
         let holoTarget = 0.35;
         let warpStrength = 0;
         let warpTarget = 0;
         let warpTimer = 0;
         const baseCameraZ = camera.position.z;
+        const introSpinDuration = 1.2;
+        let introSpinTimer = motionEnabled ? introSpinDuration : 0;
+        let introSpinBase = spinY;
         const zoomDuration = 2.6;
         const zoomDistance = 1.7;
         let zoomTimer = 0;
         let eventBoost = 0;
-        let meteorTimer = 0;
         let shockwaveStart = 0;
         let shockwaveActive = false;
         let shakeTimer = 0;
+        let audioEnergy = 0;
+        let audioBass = 0;
+        let audioFlowTime = 0;
+        let distortionStrength = 0;
 
         const edgeThreshold = 0.18;
         const dragThreshold = 4;
@@ -1031,8 +1580,8 @@
           hoverX = 0;
           hoverY = 0;
           targetLift = 0;
-          glowTarget = 0.2;
-          auraTarget = 0.95;
+          glowTarget = 0.14;
+          auraTarget = 0.65;
           holoTarget = 0.35;
         };
 
@@ -1088,13 +1637,17 @@
           hoverX = (0.5 - yPercent) * maxTilt;
           hoverY = (xPercent - 0.5) * maxTilt;
           targetLift = hoverLift;
-          glowTarget = 0.3;
-          auraTarget = 1.1;
+          glowTarget = 0.2;
+          auraTarget = 0.85;
           holoTarget = 0.6;
           hoverActive = true;
         };
 
         const handlePointerDown = (event) => {
+          ensureAudio();
+          if (introSpinTimer > 0) {
+            introSpinTimer = 0;
+          }
           if (!motionEnabled) {
             return;
           }
@@ -1141,6 +1694,10 @@
         };
 
         const triggerImpact = () => {
+          ensureAudio();
+          if (introSpinTimer > 0) {
+            introSpinTimer = 0;
+          }
           if (!motionEnabled) {
             return;
           }
@@ -1152,13 +1709,15 @@
           warpTarget = 1;
           warpTimer = 0.9;
           zoomTimer = zoomDuration;
-          meteorTimer = zoomDuration;
           shockwaveActive = true;
           shockwaveStart = performance.now();
           shakeTimer = 0.4;
         };
 
         renderer.domElement.addEventListener("pointermove", handlePointerMove);
+        renderer.domElement.addEventListener("pointerdown", ensureAudio, {
+          passive: true
+        });
         renderer.domElement.addEventListener("pointerdown", handlePointerDown);
         renderer.domElement.addEventListener("pointerup", handlePointerUp);
         renderer.domElement.addEventListener("pointercancel", handlePointerUp);
@@ -1169,12 +1728,47 @@
         });
         renderer.domElement.addEventListener("click", triggerImpact);
 
+        const updateAudio = (delta) => {
+          if (!audioState.analyser || !audioState.data) {
+            audioEnergy += (0 - audioEnergy) * 0.08;
+            audioBass += (0 - audioBass) * 0.1;
+          audioFlowTime += delta * 0.4;
+          return;
+        }
+
+          audioState.analyser.getByteFrequencyData(audioState.data);
+          const data = audioState.data;
+          let sum = 0;
+          let bassSum = 0;
+          const bassBins = Math.max(1, Math.floor(data.length * 0.12));
+          for (let i = 0; i < data.length; i += 1) {
+            sum += data[i];
+            if (i < bassBins) {
+              bassSum += data[i];
+            }
+          }
+          const energy = sum / (data.length * 255);
+          const bass = bassSum / (bassBins * 255);
+          audioEnergy += (energy - audioEnergy) * 0.15;
+          audioBass += (bass - audioBass) * 0.2;
+          audioFlowTime += delta * (0.4 + audioBass * 2.4);
+        };
+
         const updatePhysics = (delta) => {
           if (!isDragging) {
-            const snappedY = snapAngle(spinY);
-            spinY = approachAngle(spinY, snappedY, 0.18);
-            if (Math.abs(normalizeAngle(spinY - snappedY)) < 0.02) {
-              spinY = snappedY;
+            if (introSpinTimer > 0) {
+              introSpinTimer = Math.max(0, introSpinTimer - delta);
+              const progress = 1 - introSpinTimer / introSpinDuration;
+              spinY = introSpinBase + progress * Math.PI * 2;
+              if (introSpinTimer === 0) {
+                spinY = normalizeAngle(spinY);
+              }
+            } else {
+              const snappedY = snapAngle(spinY);
+              spinY = approachAngle(spinY, snappedY, 0.18);
+              if (Math.abs(normalizeAngle(spinY - snappedY)) < 0.02) {
+                spinY = snappedY;
+              }
             }
 
             spinX += (0 - spinX) * 0.12;
@@ -1183,7 +1777,9 @@
             }
           }
 
-          anchorBody.position.set(0, 0, targetLift);
+          const flowStrength = audioBass * 0.18;
+          const flowZ = Math.sin(audioFlowTime * 1.4) * flowStrength;
+          anchorBody.position.set(0, 0, targetLift + flowZ);
           spring.applyForce();
 
           const targetRotX = spinX + hoverX;
@@ -1225,13 +1821,22 @@
             shakeTimer -= delta;
             const intensity = Math.max(shakeTimer / 0.4, 0);
             const impulse = new CANNON.Vec3(
-              (Math.random() - 0.5) * 1.8 * intensity,
-              (Math.random() - 0.5) * 1.8 * intensity,
-              (Math.random() - 0.5) * 2.6 * intensity
+              0,
+              0,
+              (Math.random() - 0.5) * 0.6 * intensity
             );
             cardBody.applyImpulse(impulse, cardBody.position);
-            cardBody.angularVelocity.x += (Math.random() - 0.5) * 1.5 * intensity;
-            cardBody.angularVelocity.y += (Math.random() - 0.5) * 1.5 * intensity;
+            cardBody.angularVelocity.z += (Math.random() - 0.5) * 0.6 * intensity;
+          }
+
+          if (audioBass > 0.02) {
+            const bassIntensity = Math.min(1, (audioBass - 0.02) * 1.2);
+            const impulse = new CANNON.Vec3(
+              0,
+              0,
+              Math.sin(audioFlowTime * 2.4) * 0.08 * bassIntensity
+            );
+            cardBody.applyImpulse(impulse, cardBody.position);
           }
 
           world.step(1 / 60, delta, 3);
@@ -1249,10 +1854,17 @@
           );
         };
 
-        const updateStars = (delta, boost) => {
+        const updateStars = (delta, boost, time) => {
           const speedBoost = 1 + warpStrength * 4 + boost * 3;
           starLayers.forEach((layer) => {
             const positions = layer.positions;
+            const trail = layer.trail;
+          const trailStrength = Math.min(
+            1,
+            warpStrength * 0.12 + boost * 0.2
+          );
+          const trailLength = trailStrength * (layer.speed * 60) * 0.8;
+            const trailPositions = trail ? trail.positions : null;
             for (let i = 0; i < positions.length; i += 3) {
               positions[i + 2] += layer.speed * speedBoost * delta;
               if (positions[i + 2] > layer.nearZ) {
@@ -1260,60 +1872,62 @@
                 positions[i] = (Math.random() - 0.5) * layer.spread;
                 positions[i + 1] = (Math.random() - 0.5) * layer.spread;
               }
+              if (trailPositions) {
+                const starIndex = i / 3;
+                const trailIndex = starIndex * 6;
+                trailPositions[trailIndex] = positions[i];
+                trailPositions[trailIndex + 1] = positions[i + 1];
+                trailPositions[trailIndex + 2] = positions[i + 2];
+                trailPositions[trailIndex + 3] = positions[i];
+                trailPositions[trailIndex + 4] = positions[i + 1];
+                trailPositions[trailIndex + 5] =
+                  positions[i + 2] - trailLength;
+              }
             }
             layer.points.geometry.attributes.position.needsUpdate = true;
-            layer.material.opacity = 0.6 + warpStrength * 0.25 + boost * 0.2;
-          });
-        };
-
-        const updateMeteors = (delta, boost) => {
-          const active = meteorTimer > 0 || boost > 0.01;
-          meteorGroup.visible = active;
-          if (!active) {
-            return;
+          if (trail && boost > 0.02 && trailLength > 0) {
+            trail.geometry.attributes.position.needsUpdate = true;
+            trail.material.opacity = trailStrength * 0.22;
+          } else if (trail) {
+            trail.material.opacity = 0;
           }
-
-          const speedBoost = 1 + boost * 7.5;
-          const scaleBoost = 1 + boost * 0.65;
-          const widthBoost = 1 + boost * 0.9;
-          meteorField.forEach((meteor) => {
-            meteor.material.opacity =
-              (0.35 + boost * 0.5) * meteor.userData.opacity;
-            const baseScale = meteor.userData.baseScale;
-            meteor.scale.set(
-              baseScale.x * widthBoost,
-              baseScale.y * scaleBoost,
-              1
+            const twinkle =
+              Math.sin(time * 0.6 + layer.twinkleOffset) * 0.05 +
+              Math.sin(time * 1.1 + layer.twinkleOffset * 0.4) * 0.02;
+            layer.material.opacity = THREE.MathUtils.clamp(
+              layer.baseOpacity + twinkle + warpStrength * 0.12 + boost * 0.05,
+              0.18,
+              0.9
             );
-            meteor.position.addScaledVector(
-              meteor.userData.direction,
-              meteor.userData.speed * speedBoost * delta
-            );
-
-            if (meteor.position.z > meteorBounds.nearZ) {
-              resetMeteor(meteor);
-            }
           });
         };
+
+        const updatePlanets = () => {};
+
+        const updateMeteors = () => {};
 
         const updateHoloAndGlow = (delta, time, eventBoost) => {
           const pulse = pulseGlow(time, hoverActive ? 1.3 : 1);
-          const targetGlow = glowTarget * pulse;
+          const targetGlow = glowTarget * pulse + audioEnergy * 0.06;
           glowMaterial.opacity += (targetGlow - glowMaterial.opacity) * 0.08;
 
-          const targetHolo = holoTarget + pulse * 0.08 + eventBoost * 0.12;
+          const targetHolo =
+            holoTarget + pulse * 0.08 + eventBoost * 0.1 + audioEnergy * 0.08;
           holoUniforms.uIntensity.value +=
             (targetHolo - holoUniforms.uIntensity.value) * 0.08;
           holoUniforms.uTime.value += delta * 3;
 
           const auraPulse = pulseGlow(time, hoverActive ? 1.2 : 1);
-          const auraBackBoost = isBackFace() ? 1.45 : 1;
+          const auraBackBoost = isBackFace() ? 1.35 : 1;
           const targetAura = Math.min(
-            1.2,
-            auraTarget * auraPulse * auraBackBoost + eventBoost * 0.35
+            1.0,
+            auraTarget * auraPulse * auraBackBoost +
+              eventBoost * 0.22 +
+              audioEnergy * 0.16
           );
           auraMaterial.opacity += (targetAura - auraMaterial.opacity) * 0.08;
-          const auraScale = 1 + Math.sin(time * 1.2) * 0.03;
+          const auraScale =
+            1 + Math.sin(time * 1.2) * 0.03 + audioBass * 0.05;
           auraSprite.scale.set(
             auraBaseScale.x * auraScale,
             auraBaseScale.y * auraScale,
@@ -1323,7 +1937,7 @@
           const waveSpeed = 0.35;
           const waveSpread = 0.6;
           const waveBackBoost = isBackFace() ? 1.3 : 1;
-          const waveBase = 0.35 + eventBoost * 0.4;
+          const waveBase = 0.12 + eventBoost * 0.2 + audioEnergy * 0.08;
           waveSprites.forEach((sprite) => {
             const phase = (time * waveSpeed + sprite.userData.phaseOffset) % 1;
             const fade = Math.sin(phase * Math.PI);
@@ -1365,13 +1979,11 @@
               eventBoost = 0;
             }
 
-            if (meteorTimer > 0) {
-              meteorTimer = Math.max(0, meteorTimer - delta);
-            }
-
+            updateAudio(delta);
             camera.position.z = baseCameraZ - zoomDistance * eventBoost;
             updatePhysics(delta);
-            updateStars(delta, eventBoost);
+            updateStars(delta, eventBoost, clock.elapsedTime);
+            updatePlanets(delta, eventBoost);
             updateMeteors(delta, eventBoost);
             updateHoloAndGlow(delta, clock.elapsedTime, eventBoost);
 
@@ -1384,6 +1996,10 @@
             const desiredWarp = Math.min(1, warpTarget + eventBoost * 0.6);
             warpStrength += (desiredWarp - warpStrength) * 0.08;
             updateShockwave(performance.now());
+            const distortionTarget =
+              0.03 + eventBoost * 0.3 + audioEnergy * 0.15 + warpStrength * 0.2;
+            distortionStrength +=
+              (distortionTarget - distortionStrength) * 0.08;
           }
 
           auraSprite.position.copy(cardMesh.position);
@@ -1393,19 +2009,68 @@
             sprite.position.z -= 0.4;
           });
 
-          renderer.render(scene, camera);
+          if (postEnabled) {
+            const cardScreen = cardMesh.position.clone().project(camera);
+            postUniforms.uCenter.value.set(
+              cardScreen.x * 0.5 + 0.5,
+              cardScreen.y * 0.5 + 0.5
+            );
+            postUniforms.uTime.value = clock.elapsedTime;
+            postUniforms.uIntensity.value = distortionStrength * 0.6;
+
+            renderer.setRenderTarget(renderTarget);
+            renderer.render(scene, camera);
+            renderer.setRenderTarget(null);
+            renderer.render(postScene, postCamera);
+          } else {
+            renderer.render(scene, camera);
+          }
           requestAnimationFrame(animate);
         };
 
         animate();
       };
 
-      init();
+      let experienceStarted = false;
+      const startExperience = () => {
+        if (experienceStarted) {
+          return;
+        }
+        experienceStarted = true;
+        if (revealScreen) {
+          revealScreen.classList.add("is-hidden");
+        }
+        ensureAudio();
+        init();
+      };
+
+      if (revealButton) {
+        revealButton.addEventListener("click", startExperience);
+      }
+      if (revealScreen) {
+        revealScreen.addEventListener("click", (event) => {
+          if (event.target === revealScreen) {
+            startExperience();
+          }
+        });
+      }
 
       window.addEventListener("resize", () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
+        pixelRatio = Math.min(window.devicePixelRatio, 2);
+        renderer.setPixelRatio(pixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
+        if (postEnabled) {
+          renderTarget.setSize(
+            window.innerWidth * pixelRatio,
+            window.innerHeight * pixelRatio
+          );
+          postUniforms.uResolution.value.set(
+            window.innerWidth,
+            window.innerHeight
+          );
+        }
       });
     </script>
   </body>
