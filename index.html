@@ -259,7 +259,7 @@
             float falloff = smoothstep(1.2, 0.0, dist);
             float amp = uIntensity * (0.35 + 0.65 * pulse) * falloff;
             vec2 normDir = normalize(dir + 0.0001);
-            vec2 warp = vec2(0.0);
+            vec2 warp = normDir * ripple * amp * 0.03;
             vec2 uvWarp = clamp(uv + warp, 0.0, 1.0);
             vec2 shift = warp * 0.6;
 
@@ -268,7 +268,7 @@
             color.g = texture2D(uTexture, uvWarp).g;
             color.b = texture2D(uTexture, clamp(uvWarp - shift, 0.0, 1.0)).b;
             float rippleColor = abs(ripple);
-            color += rippleColor * amp * vec3(0.08, 0.03, 0.12);
+            color += rippleColor * amp * vec3(0.0);
             gl_FragColor = vec4(color, 1.0);
             #include <colorspace_fragment>
           }
@@ -1533,6 +1533,7 @@
         let shakeTimer = 0;
         let audioEnergy = 0;
         let audioBass = 0;
+        let audioBassFast = 0;
         let audioFlowTime = 0;
         let distortionStrength = 0;
 
@@ -1732,9 +1733,10 @@
           if (!audioState.analyser || !audioState.data) {
             audioEnergy += (0 - audioEnergy) * 0.08;
             audioBass += (0 - audioBass) * 0.1;
-          audioFlowTime += delta * 0.4;
-          return;
-        }
+            audioBassFast += (0 - audioBassFast) * 0.2;
+            audioFlowTime += delta * 0.4;
+            return;
+          }
 
           audioState.analyser.getByteFrequencyData(audioState.data);
           const data = audioState.data;
@@ -1751,7 +1753,8 @@
           const bass = bassSum / (bassBins * 255);
           audioEnergy += (energy - audioEnergy) * 0.15;
           audioBass += (bass - audioBass) * 0.2;
-          audioFlowTime += delta * (0.4 + audioBass * 2.4);
+          audioBassFast += (bass - audioBassFast) * 0.6;
+          audioFlowTime += delta * (0.5 + audioBassFast * 3.2);
         };
 
         const updatePhysics = (delta) => {
@@ -1777,8 +1780,10 @@
             }
           }
 
-          const flowStrength = audioBass * 0.18;
-          const flowZ = Math.sin(audioFlowTime * 1.4) * flowStrength;
+          const bassMotion = audioBassFast;
+          const flowStrength = bassMotion * 0.32;
+          const flowZ =
+            Math.sin(audioFlowTime * 1.9) * flowStrength + bassMotion * 0.08;
           anchorBody.position.set(0, 0, targetLift + flowZ);
           spring.applyForce();
 
@@ -1829,12 +1834,12 @@
             cardBody.angularVelocity.z += (Math.random() - 0.5) * 0.6 * intensity;
           }
 
-          if (audioBass > 0.02) {
-            const bassIntensity = Math.min(1, (audioBass - 0.02) * 1.2);
+          if (bassMotion > 0.02) {
+            const bassIntensity = Math.min(1, (bassMotion - 0.02) * 1.6);
             const impulse = new CANNON.Vec3(
               0,
               0,
-              Math.sin(audioFlowTime * 2.4) * 0.08 * bassIntensity
+              Math.sin(audioFlowTime * 3.2) * 0.14 * bassIntensity
             );
             cardBody.applyImpulse(impulse, cardBody.position);
           }
@@ -1997,7 +2002,7 @@
             warpStrength += (desiredWarp - warpStrength) * 0.08;
             updateShockwave(performance.now());
             const distortionTarget =
-              0.03 + eventBoost * 0.3 + audioEnergy * 0.15 + warpStrength * 0.2;
+              eventBoost * 0.35 + warpStrength * 0.25;
             distortionStrength +=
               (distortionTarget - distortionStrength) * 0.08;
           }
